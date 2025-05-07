@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'models/stock_data.dart'; // Import your model
-import 'services/stock_api_service.dart'; // Import your service
+import 'models/stock_data.dart'; // For StockData model
+import 'services/stock_api_service.dart'; // For StockApiService
+import 'screens/stock_detail_screen.dart'; // For navigating to StockDetailScreen
 
-// MyApp class remains the same (or as you last had it)
 void main() {
   runApp(const MyApp());
 }
@@ -15,16 +15,16 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Stock App',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.lightBlue),
+        colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.green), // Or your preferred seed color
         useMaterial3: true,
       ),
-      debugShowCheckedModeBanner: false,
+      debugShowCheckedModeBanner: false, // Removes the debug banner
       home: const HomeScreen(),
     );
   }
 }
 
-// Convert HomeScreen to StatefulWidget
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -34,25 +34,29 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final StockApiService _apiService = StockApiService();
-  Future<StockData>?
-      _stockDataFuture; // To hold the future result of our API call
+  Future<List<StockData>>? _stockListFuture;
 
-  // Define the stock we want to fetch
-  final String _symbolToFetch = "AAPL";
-  final String _companyNameToFetch =
-      "Apple Inc."; // Supplying name manually for now
+  final List<Map<String, String>> _faangStocksToFetch = [
+    {'symbol': 'META', 'name': 'Meta Platforms Inc.'},
+    {'symbol': 'AAPL', 'name': 'Apple Inc.'},
+    {'symbol': 'AMZN', 'name': 'Amazon.com Inc.'},
+    {'symbol': 'NFLX', 'name': 'Netflix Inc.'},
+    {'symbol': 'GOOGL', 'name': 'Alphabet Inc. (Class A)'},
+  ];
 
   @override
   void initState() {
     super.initState();
-    _fetchStockData(); // Call the fetch method when the widget is initialized
+    _fetchStockListData();
   }
 
-  void _fetchStockData() {
+  void _fetchStockListData() {
     setState(() {
-      // Trigger a new fetch. The FutureBuilder will handle the loading state.
-      _stockDataFuture =
-          _apiService.fetchStockQuote(_symbolToFetch, _companyNameToFetch);
+      List<Future<StockData>> futures = _faangStocksToFetch.map((stockInfo) {
+        return _apiService.fetchStockQuote(
+            stockInfo['symbol']!, stockInfo['name']!);
+      }).toList();
+      _stockListFuture = Future.wait(futures);
     });
   }
 
@@ -60,55 +64,59 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Stock Details - $_symbolToFetch'),
+        title: const Text('FAANG Stock Tracker'),
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _fetchStockData, // Add a refresh button
+            onPressed: _fetchStockListData,
           ),
         ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(8.0),
-        child: Center(
-          // Center the FutureBuilder
-          child: FutureBuilder<StockData>(
-            future: _stockDataFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                // If the Future is still running, show a loading indicator
-                return const CircularProgressIndicator();
-              } else if (snapshot.hasError) {
-                // If we run into an error, display it
-                return Text(
-                  'Error: ${snapshot.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.red),
-                );
-              } else if (snapshot.hasData) {
-                // If we have data, display it using our StockListItem
-                final stock = snapshot.data!;
-                return StockListItem(
-                  symbol: stock.symbol,
-                  companyName: stock.companyName,
-                  price: stock.price,
-                  change: stock.change,
-                  changePercentage: stock.changePercentage,
-                );
-              } else {
-                // Otherwise, show a default message (shouldn't happen often with FutureBuilder)
-                return const Text('No data available. Press refresh.');
-              }
-            },
-          ),
+        child: FutureBuilder<List<StockData>>(
+          future: _stockListFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            } else if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(
+                    'Error fetching data: ${snapshot.error}\n\n(Could be API rate limits - Alpha Vantage free tier is 5 calls/minute. Try again in a minute.)',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.red, fontSize: 16),
+                  ),
+                ),
+              );
+            } else if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+              final stocks = snapshot.data!;
+              return ListView.builder(
+                itemCount: stocks.length,
+                itemBuilder: (context, index) {
+                  final stock = stocks[index];
+                  return StockListItem(
+                    symbol: stock.symbol,
+                    companyName: stock.companyName,
+                    price: stock.price,
+                    change: stock.change,
+                    changePercentage: stock.changePercentage,
+                  );
+                },
+              );
+            } else {
+              return const Center(
+                  child: Text('No data available. Press refresh.'));
+            }
+          },
         ),
       ),
     );
   }
 }
 
-// StockListItem widget remains the same (ensure it's in this file or imported)
 class StockListItem extends StatelessWidget {
   final String symbol;
   final String companyName;
@@ -131,62 +139,76 @@ class StockListItem extends StatelessWidget {
     final String priceChangeFormatted =
         "${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} (${changePercentage.toStringAsFixed(2)}%)";
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8.0),
-      elevation: 3,
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: <Widget>[
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    symbol,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                  Text(
-                    companyName,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
+    return InkWell(
+      onTap: () {
+        print('Tapped on stock: $symbol'); // Debugging print statement
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => StockDetailScreen(
+              symbol: symbol,
+              companyName: companyName,
             ),
-            Expanded(
-              flex: 2,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: <Widget>[
-                  Text(
-                    '\$${price.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
+          ),
+        );
+      },
+      child: Card(
+        margin: const EdgeInsets.symmetric(vertical: 8.0),
+        elevation: 3,
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: <Widget>[
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      symbol,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     ),
-                  ),
-                  Text(
-                    priceChangeFormatted,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: changeColor,
-                      fontWeight: FontWeight.bold,
+                    Text(
+                      companyName,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+              Expanded(
+                flex: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: <Widget>[
+                    Text(
+                      '\$${price.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      priceChangeFormatted,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: changeColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
