@@ -28,7 +28,9 @@ This project is currently under active development (as of May 2025).
 
 ## 📸 Screenshots
 
+* Demo Onboarding Screen:
 
+    ![Demo onboarding](images/DemoWelcome.png)
 
 *  Home Screen -- Coming Soon
 *  Stock Detail View with Chart -- Coming Soon
