@@ -77,9 +77,9 @@ These instructions will get you a copy of the project up and running on your loc
     ```
 
 3.  **Configure API Key:**
-    *(Provide instructions here. For example: Create a file `lib/config/api_keys.dart` with the following content:)*
+    * Create a file `lib/config/api_keys.dart` with the following content:*
     ```dart
-    // lib/config/api_keys.dart (This file should be in .gitignore)
+    // lib/config/api_keys.dart 
     // const *** looking for a good API ***;
     ```
     
