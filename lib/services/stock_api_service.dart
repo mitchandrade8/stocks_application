@@ -2,131 +2,126 @@
 import 'dart:convert'; // For json.decode
 import 'package:http/http.dart' as http; // For making HTTP requests
 
-// Relative imports to other files in your project
-import '../models/stock_data.dart'; // Defines the StockData class
-import '../models/time_series_datapoint.dart'; // Defines the TimeSeriesDataPoint class
-import '../config/api_constants.dart'; // Defines your alphaVantageApiKey
+// Import the yahoo finance package - This should define YahooFinanceService and TickData
+import 'package:yahoo_finance_data_reader/yahoo_finance_data_reader.dart';
+
+// Relative imports to other files in your project (Verify these paths match your structure)
+import '../models/stock_data.dart'; // Defines the StockData class (for quotes)
+import '../models/time_series_datapoint.dart'; // Defines the TimeSeriesDataPoint class (for charts)
+import '../config/api_constants.dart'; // Defines your API keys (for fetchStockQuote)
 
 class StockApiService {
-  static const String _baseUrl = 'https://www.alphavantage.co/query';
+  // Base URL for Alpha Vantage (if still using for quotes)
+  static const String _alphaVantageBaseUrl =
+      'https://www.alphavantage.co/query';
 
-  /// Fetches the current global quote for a given stock symbol.
+  /// Fetches the current global quote for a given stock symbol using Alpha Vantage.
   Future<StockData> fetchStockQuote(String symbol, String companyName) async {
-    // Construct the API URL for GLOBAL_QUOTE
-    final String apiUrl =
-        '$_baseUrl?function=GLOBAL_QUOTE&symbol=$symbol&apikey=$alphaVantageApiKey';
+    // Ensure API key is available (optional check)
+    // Note: Ensure alphaVantageApiKey is defined in your api_constants.dart
+    if (alphaVantageApiKey == 'QVUN4IUTD2UOC9PW' ||
+        alphaVantageApiKey.isEmpty) {
+      print('Warning: Alpha Vantage API Key seems to be a placeholder.');
+      // Consider throwing an error if the key is essential for this part too
+      // throw Exception('Alpha Vantage API Key not set in api_constants.dart');
+    }
 
+    final String apiUrl =
+        '$_alphaVantageBaseUrl?function=GLOBAL_QUOTE&symbol=$symbol&apikey=$alphaVantageApiKey';
     try {
       final response = await http.get(Uri.parse(apiUrl));
-
       if (response.statusCode == 200) {
-        // If the server returns a 200 OK response, parse the JSON.
         final Map<String, dynamic> data = json.decode(response.body);
-
-        // Check for API notes (e.g., rate limit) or if the 'Global Quote' key is missing/empty
-        if (data.containsKey('Note')) {
-          print('API Note for $symbol (Quote): ${data["Note"]}');
-          throw Exception(
-              'API limit likely reached or other issue: ${data["Note"]}');
-        }
-        if (data['Global Quote'] == null ||
+        if (data.containsKey('Note') ||
+            data['Global Quote'] == null ||
             (data['Global Quote'] as Map).isEmpty) {
-          print(
-              'API Response for $symbol (Quote) - Missing Global Quote: $data');
+          print('API Response for $symbol (Quote): $data');
           throw Exception(
-              'Failed to load stock quote for $symbol: "Global Quote" data is missing or empty.');
+              'Failed to load stock quote for $symbol or API rate limit reached. Response: ${data.containsKey("Note") ? data["Note"] : "Empty quote data."}');
         }
-
-        // Pass the companyName manually as Alpha Vantage GLOBAL_QUOTE doesn't include it
         return StockData.fromJson(data, companyName);
       } else {
-        // If the server did not return a 200 OK response,
-        // throw an exception with the status code.
         print(
             'Failed to load stock quote for $symbol. Status: ${response.statusCode}, Body: ${response.body}');
         throw Exception(
             'Failed to load stock quote for $symbol. Status code: ${response.statusCode}');
       }
     } catch (e) {
-      // Catch any other errors during the process (network issues, parsing errors)
       print('Error fetching stock quote for $symbol: $e');
-      // Re-throw the exception to be handled by the caller
       throw Exception('Error fetching stock quote for $symbol: $e');
     }
   }
 
-  /// Fetches the daily adjusted time series data for a given stock symbol.
-  /// Returns a list of the most recent ~100 data points, sorted chronologically.
-  Future<List<TimeSeriesDataPoint>> fetchDailyTimeSeries(String symbol) async {
-    // Construct the API URL for TIME_SERIES_DAILY_ADJUSTED
-    final String apiUrl =
-        '$_baseUrl?function=TIME_SERIES_DAILY_ADJUSTED&symbol=$symbol&apikey=$alphaVantageApiKey';
+  /// Fetches historical daily data using the YahooFinanceService from the package.
+  /// Assumes getTickerData returns List<TickData> and TickData has .date and .adjClose
+  Future<List<TimeSeriesDataPoint>> fetchYahooHistory(String symbol) async {
+    print(
+        "Attempting to fetch Yahoo Finance history for: $symbol using YahooFinanceService");
+    // Instantiate the service from the package
+    final financeService = YahooFinanceService();
 
     try {
-      final response = await http.get(Uri.parse(apiUrl));
+      // Call getTickerData - Assuming this returns List<TickData> based on package examples/structure.
+      // If you get 'TickData' undefined error here, the class name provided by the package is different.
+      // Use IDE hover/autocomplete on getTickerData or the result to verify.
+      final tickerDataList = await financeService.getTickerData(symbol);
 
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = json.decode(response.body);
+      // Use the variable name 'tickerDataList' consistently below
+      if (tickerDataList.isEmpty) {
+        print('Yahoo Finance returned empty data list for $symbol');
+        return []; // Return empty list if no data
+      }
 
-        // Check for API notes (e.g., rate limit) or API error messages
-        if (data.containsKey('Note')) {
-          print('API Note for $symbol (Time Series): ${data["Note"]}');
-          throw Exception(
-              'API rate limit likely reached for $symbol time series: ${data["Note"]}');
-        }
-        if (data.containsKey('Error Message')) {
-          print(
-              'API Error for $symbol (Time Series): ${data["Error Message"]}');
-          throw Exception(
-              'API error for $symbol time series: ${data["Error Message"]}');
-        }
+      List<TimeSeriesDataPoint> seriesData = [];
+      // Iterate through the TickData objects
+      // Use the variable name 'tickerDataList' consistently here
+      for (var tick in tickerDataList) {
+        // Use the variable name 'tick' consistently below
+        // If you get errors that '.date' or '.adjClose' don't exist here,
+        // it means the TickData class from the package uses different property names.
+        // Use IDE autocomplete on 'tick.' to find the correct names.
+        try {
+          final DateTime date = tick.date;
+          final double adjClose = tick.adjClose;
 
-        // Access the 'Time Series (Daily)' part of the JSON
-        final Map<String, dynamic>? timeSeriesJson =
-            data['Time Series (Daily)'];
-        if (timeSeriesJson == null || timeSeriesJson.isEmpty) {
-          print(
-              'API Response for $symbol (Time Series) - Missing Time Series Data: $data');
-          throw Exception(
-              'Time Series (Daily) data not found or empty for $symbol.');
-        }
-
-        List<TimeSeriesDataPoint> seriesData = [];
-        // Get all dates, sort them chronologically (oldest to newest)
-        final sortedDates = timeSeriesJson.keys.toList()
-          ..sort((a, b) => DateTime.parse(a).compareTo(DateTime.parse(b)));
-
-        // Take the last 100 data points, or all if less than 100
-        final recentDates = sortedDates.length > 100
-            ? sortedDates.sublist(sortedDates.length - 100)
-            : sortedDates;
-
-        for (var dateStr in recentDates) {
-          final dayData = timeSeriesJson[dateStr] as Map<String, dynamic>;
-          // Ensure '4. close' exists and is a string before parsing
-          if (dayData['4. close'] != null && dayData['4. close'] is String) {
+          // Basic validation - skip potential bad data points
+          if (adjClose.isFinite && !adjClose.isNaN) {
             seriesData.add(TimeSeriesDataPoint(
-              date: DateTime.parse(dateStr),
-              closePrice: double.parse(dayData['4. close'] as String),
+              date: date,
+              closePrice: adjClose, // Use adjusted close for charting
             ));
           } else {
             print(
-                'Warning: Missing or invalid "4. close" data for $symbol on $dateStr');
-            // Optionally skip this data point or handle as an error
+                "Skipping tick data point with invalid adjClose: $tick for symbol $symbol");
           }
+        } catch (e) {
+          // Log if accessing properties on 'tick' fails
+          print(
+              "Error processing tick data point. Type: ${tick.runtimeType}, Content: $tick for symbol $symbol. Error: $e");
+          // Optionally continue to next tick or rethrow, depending on desired behavior
+          // continue;
         }
-
-        // The seriesData is now in chronological order (oldest to most recent from the 'recentDates' slice)
-        return seriesData;
-      } else {
-        print(
-            'Failed to load time series for $symbol. Status: ${response.statusCode}, Body: ${response.body}');
-        throw Exception(
-            'Failed to load time series for $symbol. Status code: ${response.statusCode}');
       }
+
+      // Sorting might be optional if data is already sorted (Yahoo usually is chronological)
+      seriesData.sort((a, b) => a.date.compareTo(b.date));
+
+      // Limit to recent data if desired (or handle date range in the API call)
+      // Taking the last 100 points after sorting
+      final recentData = seriesData.length > 100
+          ? seriesData.sublist(seriesData.length - 100)
+          : seriesData;
+
+      print(
+          "Successfully processed ${recentData.length} data points from Yahoo Finance for $symbol");
+      return recentData;
     } catch (e) {
-      print('Error fetching time series for $symbol: $e');
-      throw Exception('Error fetching time series for $symbol: $e');
+      // Catch errors from the financeService.getTickerData call itself
+      print(
+          'Error fetching Yahoo Finance history for $symbol using YahooFinanceService: $e');
+      // Re-throw a more specific exception if possible or a generic one
+      throw Exception(
+          'Failed to fetch history for $symbol from Yahoo Finance: $e');
     }
-  }
-}
+  } // End of fetchYahooHistory method
+} // End of StockApiService class

@@ -34,6 +34,8 @@ dependencies:
   http: ^1.2.1 # Or whatever the latest version you found on pub.dev is
   fl_chart: ^0.71.0 # Newest version found on pub.dev
 
+  yahoo_finance_data_reader: ^1.0.12 # must up-to-date finance read from pub.dev
+
   cupertino_icons: ^1.0.6 # This is usually present by default
   # ... any other dependencies you might add
 
