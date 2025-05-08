@@ -36,6 +36,8 @@ dependencies:
 
   yahoo_finance_data_reader: ^1.0.12 # must up-to-date finance read from pub.dev
 
+  shared_preferences: ^2.5.3 # must up-to-date shared preferences from pub.dev
+
   cupertino_icons: ^1.0.6 # This is usually present by default
   # ... any other dependencies you might add
 

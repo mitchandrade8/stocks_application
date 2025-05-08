@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
-import 'models/stock_data.dart'; // For StockData model
-import 'services/stock_api_service.dart'; // For StockApiService
-import 'screens/stock_detail_screen.dart'; // For navigating to StockDetailScreen
+import 'package:shared_preferences/shared_preferences.dart'; // For local storage
+
+// Ensure paths are correct based on your project structure
+import 'models/stock_data.dart';
+import 'services/stock_api_service.dart';
+import 'screens/stock_detail_screen.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  // Use super.key if SDK constraint >= 2.17.0, otherwise use Key? key
   const MyApp({super.key});
 
   @override
@@ -16,16 +20,17 @@ class MyApp extends StatelessWidget {
       title: 'Stock App',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.green), // Or your preferred seed color
+            seedColor: Colors.indigo), // Example seed color
         useMaterial3: true,
       ),
-      debugShowCheckedModeBanner: false, // Removes the debug banner
+      debugShowCheckedModeBanner: false,
       home: const HomeScreen(),
     );
   }
 }
 
 class HomeScreen extends StatefulWidget {
+  // Use super.key if SDK constraint >= 2.17.0, otherwise use Key? key
   const HomeScreen({super.key});
 
   @override
@@ -34,23 +39,24 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final StockApiService _apiService = StockApiService();
-  final TextEditingController _symbolController =
-      TextEditingController(); // For the dialog
+  final TextEditingController _symbolController = TextEditingController();
 
   // State variables
-  List<String> _watchlistSymbols = [
-    'AAPL',
-    'GOOGL',
-    'META'
-  ]; // Start with some defaults
-  Map<String, StockData> _watchlistData = {}; // Map symbol to its StockData
-  bool _isLoading = false;
+  List<String> _watchlistSymbols = []; // Start empty, load from prefs
+  Map<String, StockData?> _watchlistData =
+      {}; // Map symbol to its StockData (nullable for loading state)
+  bool _isLoading = true; // Start loading initially
   String? _error; // To store potential error messages
+  bool _isPrefsLoaded = false; // Flag to track if prefs have been loaded
+
+  // Key for saving/loading watchlist in SharedPreferences
+  static const String _watchlistPrefKey = 'stockWatchlist';
 
   @override
   void initState() {
     super.initState();
-    _fetchWatchlistData(); // Fetch data for initial symbols
+    // Load the watchlist from storage first, then fetch data
+    _loadWatchlistAndFetchData();
   }
 
   @override
@@ -59,42 +65,130 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // Fetch data for all symbols in the watchlist
-  Future<void> _fetchWatchlistData({bool pullToRefresh = false}) async {
-    if (!pullToRefresh) {
-      // Only show loading indicator on initial load or add
+  // --- SharedPreferences Logic ---
+
+  // Combines loading and default handling
+  Future<void> _loadWatchlistAndFetchData() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    List<String> loadedSymbols = [];
+    bool keyExisted = false;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      keyExisted = prefs.containsKey(_watchlistPrefKey);
+      loadedSymbols = prefs.getStringList(_watchlistPrefKey) ?? [];
+      print("--- Loaded Watchlist ---");
+      print("Key '$_watchlistPrefKey' existed: $keyExisted");
+      print("Loaded symbols: $loadedSymbols");
+      print("------------------------");
+    } catch (e) {/* ... error handling ... */}
+
+    if (mounted) {
       setState(() {
-        _isLoading = true;
-        _error = null; // Clear previous errors
+        _watchlistSymbols = loadedSymbols; /* ... */
       });
     }
 
-    // Create a temporary map to hold new data
-    Map<String, StockData> newData = {};
-    List<String> errors = [];
+    if (!keyExisted && _watchlistSymbols.isEmpty) {
+      print("Watchlist key didn't exist & list empty. Adding defaults.");
+      _watchlistSymbols = ['AAPL', 'GOOGL', 'META'];
+      await _saveWatchlist(); // <<< Ensure this await is here
+      if (mounted) {/* ... */}
+    }
 
-    // Use Alpha Vantage fetchStockQuote (requires name - fetch it or use symbol?)
-    // Let's modify fetchStockQuote slightly for this use case, or fetch name separately.
-    // Easiest for now: Pass symbol as name to fetchStockQuote and ignore it later.
-    for (String symbol in _watchlistSymbols) {
+    _isPrefsLoaded = true;
+    await _fetchWatchlistData(pullToRefresh: false);
+  }
+
+  Future<void> _saveWatchlist() async {
+    // Ensure widget is still mounted before performing async operations affecting state/prefs
+    if (!mounted) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      print("--- Saving Watchlist ---");
+      print("Symbols to save: $_watchlistSymbols");
+
+      // *** CHECK THE RETURN VALUE ***
+      final bool success =
+          await prefs.setStringList(_watchlistPrefKey, _watchlistSymbols);
+
+      // *** PRINT SUCCESS OR FAILURE ***
+      if (success) {
+        print("SharedPreferences save successful (returned true).");
+      } else {
+        // This indicates the platform plugin reported failure
+        print("!!! SharedPreferences save FAILED (returned false).");
+      }
+      print("------------------------");
+    } catch (e) {
+      print("!!! Error saving watchlist (exception): $e");
+    }
+  }
+
+  // --- Data Fetching Logic ---
+  Future<void> _fetchWatchlistData({bool pullToRefresh = false}) async {
+    // Don't fetch if prefs haven't loaded, unless it's a user-initiated refresh
+    if (!_isPrefsLoaded && !pullToRefresh) {
+      print("Skipping fetch: Prefs not loaded yet.");
+      // Ensure loading is turned off if we skip fetching after initial load attempt
+      if (mounted && _isLoading) setState(() => _isLoading = false);
+      return;
+    }
+
+    // Set loading state appropriately
+    if (!pullToRefresh && mounted) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    } else if (mounted) {
+      setState(() {
+        _error = null;
+      }); // Clear error on pull-to-refresh
+    }
+
+    Map<String, StockData?> currentData =
+        Map.from(_watchlistData); // Use existing data map
+    List<String> errors = [];
+    List<String> symbolsToFetch =
+        List.from(_watchlistSymbols); // Use current watchlist
+
+    print("Fetching data for symbols: $symbolsToFetch");
+
+    for (String symbol in symbolsToFetch) {
+      if (!mounted)
+        return; // Check if widget is still mounted before/during loop
       try {
-        // We pass symbol also as companyName - fetchStockQuote ignores it if using AlphaVantage
-        // but might need adjustment if you switch quote provider later.
+        // Pass symbol also as companyName for now
         final stockData = await _apiService.fetchStockQuote(symbol, symbol);
-        newData[symbol] = stockData;
+        if (mounted) {
+          // Check again before updating state inside loop
+          setState(() {
+            currentData[symbol] = stockData; // Update map as data arrives
+          });
+        }
       } catch (e) {
         print("Error fetching quote for $symbol: $e");
-        errors.add(symbol); // Keep track of failed symbols
+        errors.add(symbol);
+        if (mounted) {
+          setState(() {
+            currentData[symbol] = null; // Explicitly mark as failed/null
+          });
+        }
       }
     }
 
-    // Update state only if the widget is still mounted
     if (mounted) {
       setState(() {
-        _watchlistData = newData; // Update with successfully fetched data
-        _isLoading = false;
+        _watchlistData = currentData; // Assign the updated map
+        _isLoading = false; // Turn off loading indicator
         if (errors.isNotEmpty) {
-          _error = "Couldn't fetch data for: ${errors.join(', ')}";
+          _error = "Couldn't update data for: ${errors.join(', ')}";
         } else {
           _error = null;
         }
@@ -102,32 +196,44 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Add a stock symbol to the watchlist
-  void _addStockToWatchlist(String symbol) {
+  // --- Add/Remove Logic ---
+
+   void _addStockToWatchlist(String symbol) async {
     final upperSymbol = symbol.toUpperCase().trim();
     if (upperSymbol.isNotEmpty && !_watchlistSymbols.contains(upperSymbol)) {
+      print("Adding symbol: $upperSymbol");
       setState(() {
         _watchlistSymbols.add(upperSymbol);
-        _error = null; // Clear error when adding
-        // Optionally fetch just the new stock data immediately, or wait for full refresh
-        // Let's trigger a full refresh for simplicity now
-        _fetchWatchlistData();
-        // TODO: Persist _watchlistSymbols to local storage here
+        _error = null;
+        _watchlistData[upperSymbol] = null;
       });
+      await _saveWatchlist(); // Await the save operation
+
+      // *** ADDED DEBUG DELAY - REMOVE FOR PRODUCTION ***
+      await Future.delayed(const Duration(milliseconds: 500));
+      print("Debug delay after add/save complete.");
+      // *** END DEBUG DELAY ***
+
+      _fetchWatchlistData();
     }
-    _symbolController.clear(); // Clear the text field
+    _symbolController.clear();
   }
 
-  // Remove a stock symbol from the watchlist
-  void _removeStockFromWatchlist(String symbol) {
+  void _removeStockFromWatchlist(String symbol) async {
+    print("Removing symbol: $symbol");
     setState(() {
       _watchlistSymbols.remove(symbol);
-      _watchlistData.remove(symbol); // Remove from displayed data immediately
-      // TODO: Update persisted list in local storage here
+      _watchlistData.remove(symbol);
     });
+    await _saveWatchlist(); // Await the save operation
+
+    // *** ADDED DEBUG DELAY - REMOVE FOR PRODUCTION ***
+    await Future.delayed(const Duration(milliseconds: 500));
+    print("Debug delay after remove/save complete.");
+    // *** END DEBUG DELAY ***
   }
 
-  // Show the dialog to add a new stock
+  // --- Dialog Logic ---
   Future<void> _showAddStockDialog() async {
     return showDialog<void>(
       context: context,
@@ -141,9 +247,11 @@ class _HomeScreenState extends State<HomeScreen> {
             textCapitalization: TextCapitalization.characters,
             decoration: const InputDecoration(hintText: 'e.g., MSFT'),
             onSubmitted: (value) {
-              // Add on submit
-              _addStockToWatchlist(value);
-              Navigator.of(context).pop(); // Close dialog on submit
+              // Add on pressing Enter/Submit
+              if (value.trim().isNotEmpty) {
+                _addStockToWatchlist(value);
+                Navigator.of(context).pop(); // Close dialog
+              }
             },
           ),
           actions: <Widget>[
@@ -157,8 +265,10 @@ class _HomeScreenState extends State<HomeScreen> {
             TextButton(
               child: const Text('Add'),
               onPressed: () {
-                _addStockToWatchlist(_symbolController.text);
-                Navigator.of(context).pop(); // Close dialog
+                if (_symbolController.text.trim().isNotEmpty) {
+                  _addStockToWatchlist(_symbolController.text);
+                  Navigator.of(context).pop(); // Close dialog
+                }
               },
             ),
           ],
@@ -175,11 +285,12 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
         actions: [
           IconButton(
-            // Keep refresh button
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh Data',
-            onPressed: () => _fetchWatchlistData(
-                pullToRefresh: true), // Allow refresh without loading indicator
+            // Only enable refresh if not already loading
+            onPressed: _isLoading
+                ? null
+                : () => _fetchWatchlistData(pullToRefresh: true),
           ),
         ],
       ),
@@ -194,24 +305,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Helper widget to build the body content
   Widget _buildBody() {
-    if (_isLoading && _watchlistData.isEmpty) {
-      // Show loading only on initial load
+    // Show loading indicator only on initial load when list/data is empty
+    if (_isLoading && _watchlistData.isEmpty && _watchlistSymbols.isNotEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_watchlistSymbols.isEmpty) {
+    // Show empty message if list is empty AND prefs have loaded
+    if (_watchlistSymbols.isEmpty && _isPrefsLoaded) {
       return const Center(
           child: Text('Your watchlist is empty.\nTap + to add a stock.',
               textAlign: TextAlign.center));
     }
-    // Combine error display with the list
+    // If prefs haven't loaded show loading (covers initial state before load finishes)
+    if (!_isPrefsLoaded) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Build the list potentially showing errors at the top
     return Column(
       children: [
-        if (_error != null) // Show error if present
+        if (_error != null) // Show error message if present
           Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Text(_error!,
                 style: const TextStyle(
-                    color: Colors.orange, fontWeight: FontWeight.bold)),
+                    color: Colors.orange, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center),
           ),
         Expanded(
           // Make ListView take remaining space
@@ -219,69 +338,89 @@ class _HomeScreenState extends State<HomeScreen> {
             // Add pull-to-refresh
             onRefresh: () => _fetchWatchlistData(pullToRefresh: true),
             child: ListView.builder(
+              // Add padding to list itself
+              padding:
+                  const EdgeInsets.only(bottom: 80), // Ensure space for FAB
               itemCount: _watchlistSymbols.length,
               itemBuilder: (context, index) {
                 final symbol = _watchlistSymbols[index];
-                final stock = _watchlistData[symbol]; // Get data from map
+                // Use nullable StockData directly from the map
+                final StockData? stock = _watchlistData[symbol];
 
-                // If data for this symbol hasn't loaded yet or failed
-                if (stock == null) {
-                  // Optionally show a placeholder or loading state per item
-                  return Card(
-                    margin: const EdgeInsets.symmetric(
-                        vertical: 6.0, horizontal: 4.0),
-                    child: ListTile(
-                      title: Text(symbol,
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[500])),
-                      trailing: const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2)),
-                    ),
-                  );
-                }
+                // Check if data is loading (exists in symbol list but not yet in data map)
+                // or if it explicitly failed (null in map after fetch attempt)
+                bool isItemLoading =
+                    !_watchlistData.containsKey(symbol) || stock == null;
+                // Determine if there was a specific error for *this* symbol
+                bool itemHadError =
+                    (_error?.contains(symbol) ?? false) && stock == null;
 
-                // If data is loaded, show the Dismissible StockListItem
+                // Build Dismissible item
                 return Dismissible(
-                  key: ValueKey(symbol), // Unique key is required
-                  direction:
-                      DismissDirection.endToStart, // Swipe left to dismiss
+                  key: ValueKey(symbol), // Use symbol for unique key
+                  direction: DismissDirection.endToStart, // Swipe direction
                   onDismissed: (direction) {
                     _removeStockFromWatchlist(symbol);
-                    // Show a snackbar confirmation
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('$symbol removed from watchlist')),
+                      SnackBar(
+                        content: Text('$symbol removed from watchlist'),
+                        duration: const Duration(seconds: 2),
+                      ),
                     );
                   },
                   background: Container(
-                    color: Colors.redAccent,
+                    // Background shown during swipe
+                    color: Colors.redAccent[700],
                     alignment: Alignment.centerRight,
                     padding: const EdgeInsets.symmetric(horizontal: 20.0),
                     child: const Icon(Icons.delete_sweep, color: Colors.white),
                   ),
-                  child: StockListItem(
-                    // Use the modified StockListItem
-                    symbol: stock.symbol,
-                    // companyName: stock.companyName, // Removed
-                    price: stock.price,
-                    change: stock.change,
-                    changePercentage: stock.changePercentage,
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+                  child:
+                      (isItemLoading) // Show loading/error state or actual data
+                          ? Card(
+                              // Placeholder card for loading/error state
+                              margin: const EdgeInsets.symmetric(
+                                  vertical: 6.0, horizontal: 4.0),
+                              child: ListTile(
+                                title: Text(symbol,
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.grey[600])),
+                                trailing: SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child:
+                                        itemHadError // Show error icon if specific error occurred
+                                            ? Tooltip(
+                                                message: "Failed to load",
+                                                child: Icon(Icons.error_outline,
+                                                    color: Colors.orange[800],
+                                                    size: 24))
+                                            : const CircularProgressIndicator(
+                                                strokeWidth: 2)),
+                              ),
+                            )
+                          : StockListItem(
+                              // Show actual data using StockListItem
+                              symbol: stock.symbol,
+                              price: stock.price,
+                              change: stock.change,
+                              changePercentage: stock.changePercentage,
+                            ),
+                ); // End Dismissible
+              }, // End itemBuilder
+            ), // End ListView.builder
+          ), // End RefreshIndicator
+        ), // End Expanded
+      ], // End Column children
+    ); // End Column
+  } // End _buildBody
 } // End _HomeScreenState
 
+// --- StockListItem Widget ---
+// (Ensure this is present below, same as the last version without companyName)
 class StockListItem extends StatelessWidget {
   final String symbol;
-  // final String companyName; // Removed
   final double price;
   final double change;
   final double changePercentage;
@@ -289,7 +428,6 @@ class StockListItem extends StatelessWidget {
   const StockListItem({
     super.key,
     required this.symbol,
-    // required this.companyName, // Removed
     required this.price,
     required this.change,
     required this.changePercentage,
@@ -307,21 +445,18 @@ class StockListItem extends StatelessWidget {
         Navigator.push(
           context,
           MaterialPageRoute(
-            // Pass symbol, but maybe fetch name inside detail screen later
             builder: (context) => StockDetailScreen(
               symbol: symbol,
-              companyName: symbol, // Pass symbol as name for now
+              companyName: symbol, // Passing symbol as name for now
             ),
           ),
         );
       },
       child: Card(
-        margin: const EdgeInsets.symmetric(
-            vertical: 6.0, horizontal: 4.0), // Adjusted margin
-        elevation: 2, // Slightly less elevation
+        margin: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 4.0),
+        elevation: 2,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-              vertical: 10.0, horizontal: 16.0), // Adjusted padding
+          padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 16.0),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
